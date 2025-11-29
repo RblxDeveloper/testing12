@@ -857,6 +857,24 @@ function toggleAuthMode(event) {
   if (fc) fc.value = ''
 }
 
+function handleFormSubmit(event) {
+  if (event) event.preventDefault()
+  
+  if (currentAuthMode === "login") {
+    if (currentUserType === "child") {
+      loginAsChild()
+    } else {
+      loginAsParent()
+    }
+  } else {
+    if (currentUserType === "child") {
+      signupAsChild()
+    } else {
+      signupAsParent()
+    }
+  }
+}
+
 function closeLoginModal() {
   document.getElementById("loginModal").style.display = "none"
   document.getElementById("loginForm").reset()

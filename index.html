@@ -60,7 +60,7 @@
             <div class="modal-content">
                 <span class="close" onclick="closeLoginModal()">&times;</span>
                 <h2 id="formTitle">Login</h2>
-                <form id="loginForm">
+                <form id="loginForm" onsubmit="handleFormSubmit(event); return false;">
                     <div class="form-group" id="nameGroup" style="display: none;">
                         <label for="name">Name</label>
                         <input type="text" id="name" name="name">
@@ -77,7 +77,7 @@
                         <label for="password">Password</label>
                         <input type="password" id="password" name="password" required minlength="6">
                     </div>
-                    <button type="submit" class="submit-btn" id="submitBtn">Login</button>
+                    <button type="button" class="submit-btn" id="submitBtn" onclick="handleFormSubmit(event)">Login</button>
                     <p class="toggle-auth" id="toggleAuth">
                         Don't have an account? <a href="#" onclick="toggleAuthMode(event)">Sign up</a>
                     </p>
