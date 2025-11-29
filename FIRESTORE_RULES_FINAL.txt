@@ -33,15 +33,11 @@ service cloud.firestore {
       // Users can read their own data
       allow read: if isSignedIn() && request.auth.uid == userId;
       
-      // Parents can read any user in their family by checking familyCode equality
-      allow read: if isSignedIn() && isParent() && resource.data.familyCode == getUserData().familyCode;
-      
-      // Children can read other children in their family
-      allow read: if isSignedIn() && isChild() && resource.data.familyCode == getUserData().familyCode;
-      
-      // Special: Allow parents to read all users (for querying children list)
-      // This is needed for queries like: users.where('familyCode', '==', parentFamilyCode).where('role', '==', 'child')
+      // Parents can read ALL users (needed for querying children list by familyCode)
       allow read: if isSignedIn() && isParent();
+      
+      // Children can read other users in their same family
+      allow read: if isSignedIn() && isChild() && resource.data.familyCode == getUserData().familyCode;
       
       // Users can create their own profile during signup
       allow create: if isSignedIn() && request.auth.uid == userId;

@@ -1182,19 +1182,35 @@ async function loadPendingApprovals() {
     for (const doc of submissionsSnapshot.docs) {
       const submission = doc.data()
 
-      // Defensive check: ensure userId exists before querying
+      // Defensive check: ensure userId and taskId exist before querying
       if (!submission.userId) {
-        console.warn('[TaskQuest] Submission missing userId:', doc.id)
+        console.warn('[TaskQuest] Skipping submission (missing userId):', doc.id)
+        continue
+      }
+      if (!submission.taskId) {
+        console.warn('[TaskQuest] Skipping submission (missing taskId):', doc.id)
         continue
       }
 
       // Get child name
-      const childDoc = await db.collection("users").doc(submission.userId).get()
-      const childName = childDoc.exists ? childDoc.data().name : "Unknown"
+      let childName = "Unknown"
+      try {
+        const childDoc = await db.collection("users").doc(submission.userId).get()
+        childName = childDoc.exists ? childDoc.data().name : "Unknown"
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to load child name:', e)
+      }
 
       // Get task details
-      const taskDoc = await db.collection("taskTemplates").doc(submission.taskId).get()
-      const task = taskDoc.exists ? taskDoc.data() : { title: submission.taskTitle || "Unknown Task", points: 0 }
+      let task = { title: submission.taskTitle || "Unknown Task", points: 0 }
+      try {
+        const taskDoc = await db.collection("taskTemplates").doc(submission.taskId).get()
+        if (taskDoc.exists) {
+          task = taskDoc.data()
+        }
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to load task details:', e)
+      }
 
       const timestamp = submission.submittedAt ? getTimeAgo(submission.submittedAt.toDate()) : "Just now"
 
@@ -1274,19 +1290,37 @@ async function loadChildren() {
     for (const doc of childrenSnapshot.docs) {
       const child = doc.data()
 
-      // Count completed tasks
-      const completedSnapshot = await db
-        .collection("submissions")
-        .where("userId", "==", doc.id)
-        .where("status", "==", "approved")
-        .get()
+      // Defensive: ensure child has required fields
+      if (!doc.id) {
+        console.warn('[TaskQuest] Child doc missing ID')
+        continue
+      }
 
-      // Count pending tasks
-      const pendingSnapshot = await db
-        .collection("submissions")
-        .where("userId", "==", doc.id)
-        .where("status", "==", "pending")
-        .get()
+      // Count completed tasks (with error handling)
+      let completedCount = 0
+      try {
+        const completedSnapshot = await db
+          .collection("submissions")
+          .where("userId", "==", doc.id)
+          .where("status", "==", "approved")
+          .get()
+        completedCount = completedSnapshot.size
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to count completed tasks:', e)
+      }
+
+      // Count pending tasks (with error handling)
+      let pendingCount = 0
+      try {
+        const pendingSnapshot = await db
+          .collection("submissions")
+          .where("userId", "==", doc.id)
+          .where("status", "==", "pending")
+          .get()
+        pendingCount = pendingSnapshot.size
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to count pending tasks:', e)
+      }
 
       const childCard = document.createElement("div")
       childCard.className = "child-card"
@@ -1300,11 +1334,11 @@ async function loadChildren() {
           </div>
           <div class="stat">
             <span class="stat-label">Completed</span>
-            <span class="stat-value">${completedSnapshot.size}</span>
+            <span class="stat-value">${completedCount}</span>
           </div>
           <div class="stat">
             <span class="stat-label">Pending</span>
-            <span class="stat-value">${pendingSnapshot.size}</span>
+            <span class="stat-value">${pendingCount}</span>
           </div>
         </div>
         <div class="child-actions">
