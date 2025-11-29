@@ -1182,6 +1182,12 @@ async function loadPendingApprovals() {
     for (const doc of submissionsSnapshot.docs) {
       const submission = doc.data()
 
+      // Defensive check: ensure userId exists before querying
+      if (!submission.userId) {
+        console.warn('[TaskQuest] Submission missing userId:', doc.id)
+        continue
+      }
+
       // Get child name
       const childDoc = await db.collection("users").doc(submission.userId).get()
       const childName = childDoc.exists ? childDoc.data().name : "Unknown"
@@ -1310,9 +1316,14 @@ async function loadChildren() {
     }
   } catch (error) {
     console.error("[TaskQuest] Load children error:", error)
+    const msg = (error && (error.message || String(error))) || String(error)
+    if (msg.toLowerCase().includes("missing or insufficient permissions")) {
+      console.warn("[TaskQuest] Permission denied when loading children. Ensure Firestore rules allow parents to read the users collection.")
+      showNotification("Permission denied. Update Firestore rules to allow parents to view children.", "error")
+    }
     const childrenGrid = document.getElementById("childrenGrid")
     if (childrenGrid) {
-      childrenGrid.innerHTML = "<p>Error loading children. Please refresh the page.</p>"
+      childrenGrid.innerHTML = "<p>Error loading children. Please check Firestore rules or refresh the page.</p>"
     }
   }
 }
