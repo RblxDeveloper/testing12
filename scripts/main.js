@@ -27,6 +27,14 @@ if (typeof firebase !== "undefined" && firebase) {
     db = firebase.firestore()
     storage = firebase.storage()
     auth = firebase.auth()
+    
+    // Enable persistent login: user stays logged in across browser sessions
+    // Using LOCAL persistence means login persists even after browser close
+    firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+      .catch((error) => {
+        console.warn("[TaskQuest] Persistence setup failed:", error)
+      })
+    
     console.log("[TaskQuest] Firebase initialized successfully")
   } catch (e) {
     console.warn("[TaskQuest] Firebase present but initialization failed:", e)
@@ -37,11 +45,51 @@ if (typeof firebase !== "undefined" && firebase) {
 }
 
 // ==========================================
+// SESSION & AUTH STATE MANAGEMENT
+// ==========================================
+
+// Set up auth state persistence listener
+if (auth) {
+  auth.onAuthStateChanged((user) => {
+    // Check if this tab was explicitly logged out
+    if (sessionStorage.getItem('loggedOut') === 'true') {
+      return // Don't restore session for this tab
+    }
+    
+    // If user is logged in and we're on the login page, redirect
+    if (user && window.location.pathname.includes('index.html')) {
+      console.log('[TaskQuest] User already logged in, redirecting...')
+      // Determine if parent or child by checking their role
+      db.collection('users').doc(user.uid).get().then((doc) => {
+        if (doc.exists && doc.data().role === 'parent') {
+          window.location.href = 'parent-dashboard.html'
+        } else {
+          window.location.href = 'child-dashboard.html'
+        }
+      }).catch((err) => {
+        console.error('[TaskQuest] Failed to determine user role:', err)
+      })
+    }
+    
+    // If user is NOT logged in but we're on a dashboard, redirect to login
+    if (!user && (window.location.pathname.includes('parent-dashboard') || window.location.pathname.includes('child-dashboard'))) {
+      console.log('[TaskQuest] User not logged in, redirecting to login...')
+      sessionStorage.removeItem('loggedOut')
+      window.location.href = 'index.html'
+    }
+  })
+}
+
+// ==========================================
 // AUTHENTICATION FUNCTIONS
 // ==========================================
 
 let currentAuthMode = "login" // 'login' or 'signup'
 let currentUserType = "child" // 'child' or 'parent'
+
+// Track current task state for child workflow
+let currentTaskInfo = { id: null, title: null, inProgressSubmissionId: null, inProgressFamilyCode: null }
+let uploadedPhotos = { before: null, after: null }
 
 function generateFamilyCode() {
   return Math.floor(100000 + Math.random() * 900000).toString()
@@ -255,15 +303,6 @@ async function signupAsChild() {
 // TASK UPLOAD FUNCTIONS
 // ==========================================
 
-let uploadedPhotos = {
-  before: null,
-  after: null,
-}
-let currentTaskInfo = {
-  id: null,
-  title: null,
-}
-
 async function uploadBeforePhoto(event) {
   const file = event.target.files[0]
   if (!file) return
@@ -436,20 +475,34 @@ async function submitTaskForReview() {
     }
 
     // Create submission in Firestore (store both URL if available and data URLs as fallback)
-    await db.collection("submissions").add({
-      userId: user.uid,
-      taskId: currentTaskInfo.id,
-      taskTitle: currentTaskInfo.title,
+    const submissionData = {
       beforePhoto: beforeURL || null,
       afterPhoto: afterURL || null,
       beforeDataUrl: beforeDataUrl || null,
       afterDataUrl: afterDataUrl || null,
       status: "pending",
-      familyCode: familyCode,
       submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    })
+    }
 
-    showNotification("Task submitted for review! 🎉", "success")
+    // Check if we have an in-progress submission to update, or create a new one
+    if (currentTaskInfo.inProgressSubmissionId) {
+      // Update the existing in-progress submission with photos
+      await db.collection("submissions").doc(currentTaskInfo.inProgressSubmissionId).update(submissionData)
+      console.log('[TaskQuest] Updated in-progress submission with photos')
+    } else {
+      // Create a new submission (fallback if workflow wasn't followed)
+      await db.collection("submissions").add({
+        userId: user.uid,
+        taskId: currentTaskInfo.id,
+        taskTitle: currentTaskInfo.title,
+        ...submissionData,
+        familyCode: familyCode,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      })
+      console.log('[TaskQuest] Created new submission with photos')
+    }
+
+    showNotification("✅ Task submitted for review! Your parent will check it soon.", "success")
     closeUploadModal()
 
     setTimeout(() => {
@@ -472,6 +525,7 @@ async function submitTaskForReview() {
       showNotification("Submission failed: " + msg, "error")
     }
   }
+}
 }
 
 // ==========================================
@@ -830,17 +884,65 @@ function closeAddRewardModal() {
   document.getElementById("addRewardForm").reset()
 }
 
-function startTask(taskId, taskTitle) {
-  currentTaskInfo = {
-    id: taskId,
-    title: taskTitle,
-  }
+async function startTask(taskId, taskTitle) {
+  try {
+    const user = auth.currentUser
+    if (!user) {
+      showNotification("Please login first", "error")
+      return
+    }
 
+    // Create an in-progress submission right away
+    const familyCode = await getFamilyCodeForUser(user)
+    if (!familyCode) {
+      showNotification("Unable to determine family code. Ask your parent to set up the family.", "error")
+      return
+    }
+
+    // Create a document with status "in-progress"
+    const submission = await db.collection("submissions").add({
+      userId: user.uid,
+      taskId: taskId,
+      taskTitle: taskTitle,
+      beforePhoto: null,
+      afterPhoto: null,
+      beforeDataUrl: null,
+      afterDataUrl: null,
+      status: "in-progress",
+      familyCode: familyCode,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    })
+
+    // Store the submission info so we can update it later
+    currentTaskInfo = {
+      id: taskId,
+      title: taskTitle,
+      inProgressSubmissionId: submission.id,
+      inProgressFamilyCode: familyCode,
+    }
+
+    showNotification(`Started task: ${taskTitle}`, "success")
+
+    // Refresh the task list to show "Finish Task" button
+    setTimeout(() => {
+      loadAvailableTasks()
+    }, 500)
+  } catch (error) {
+    console.error("[TaskQuest] Start task error:", error)
+    showNotification("Failed to start task: " + error.message, "error")
+  }
+}
+
+function finishTask(taskId, taskTitle) {
+  // This function is called when the user clicks "Finish Task"
+  // The submission ID was stored in currentTaskInfo when startTask was called
+  // Just open the modal - the submission ID is already in currentTaskInfo
+  
   const modal = document.getElementById("uploadModal")
   const titleElement = document.getElementById("uploadTaskTitle")
 
   if (titleElement) {
-    titleElement.textContent = `Task: ${taskTitle}`
+    titleElement.textContent = `Complete Task: ${taskTitle}`
   }
 
   if (modal) {
@@ -998,6 +1100,8 @@ function navigateToSection(target) {
     case "approvals":
       const approvalsSection = document.getElementById("approvals-section")
       if (approvalsSection) approvalsSection.style.display = "block"
+      loadPendingApprovals()
+      loadOngoingTasks()
       break
     case "children":
       const childrenSection = document.getElementById("children-section")
@@ -1067,7 +1171,6 @@ async function loadAvailableTasks() {
     const user = auth.currentUser
     const familyCode = await getFamilyCodeForUser(user)
     if (!familyCode) {
-      const tasksGrid = document.querySelector(".child-tasks-grid")
       if (tasksGrid) tasksGrid.innerHTML = "<p>No tasks available yet. Ask your parent to create tasks!</p>"
       return
     }
@@ -1079,19 +1182,40 @@ async function loadAvailableTasks() {
       return
     }
 
+    // Get in-progress submissions for this user
+    const inProgressSnapshot = await db.collection("submissions")
+      .where("userId", "==", user.uid)
+      .where("status", "==", "in-progress")
+      .get()
+
+    const inProgressTaskIds = new Set()
+    inProgressSnapshot.forEach((doc) => {
+      inProgressTaskIds.add(doc.data().taskId)
+    })
+
     tasksGrid.innerHTML = ""
 
     tasksSnapshot.forEach((doc) => {
       const task = doc.data()
+      const taskId = doc.id
+      const isInProgress = inProgressTaskIds.has(taskId)
+
       const taskCard = document.createElement("div")
-      taskCard.className = "child-task-card"
+      taskCard.className = `child-task-card ${isInProgress ? 'in-progress' : ''}`
+      
+      const buttonText = isInProgress ? '⏳ Finish Task' : 'Start Task'
+      const buttonClass = isInProgress ? 'finish-task-btn' : 'start-task-btn'
+      const buttonAction = isInProgress 
+        ? `finishTask('${taskId}', '${task.title.replace(/'/g, "\\'")}')`
+        : `startTask('${taskId}', '${task.title.replace(/'/g, "\\'")}')`
+
       taskCard.innerHTML = `
         <div class="task-icon-large">${task.icon || "📋"}</div>
         <h3>${task.title}</h3>
         <p>${task.description}</p>
         <div class="task-footer">
           <span class="task-points">+${task.points} pts</span>
-          <button class="start-task-btn" onclick="startTask('${doc.id}', '${task.title.replace(/'/g, "\\'")}')">Start Task</button>
+          <button class="${buttonClass}" onclick="${buttonAction}">${buttonText}</button>
         </div>
       `
       tasksGrid.appendChild(taskCard)
@@ -1251,6 +1375,85 @@ async function loadPendingApprovals() {
   }
 }
 
+async function loadOngoingTasks() {
+  try {
+    const grid = document.getElementById("ongoingTasksGrid")
+    if (!grid) return
+
+    const user = auth.currentUser
+    const familyCode = await getFamilyCodeForUser(user)
+    if (!familyCode) {
+      if (grid) grid.innerHTML = "<p>No on-going tasks at the moment.</p>"
+      return
+    }
+
+    const submissionsSnapshot = await db
+      .collection("submissions")
+      .where("familyCode", "==", familyCode)
+      .where("status", "==", "in-progress")
+      .orderBy("createdAt", "desc")
+      .get()
+
+    if (submissionsSnapshot.empty) {
+      grid.innerHTML = "<p>No on-going tasks at the moment. 😴</p>"
+      return
+    }
+
+    grid.innerHTML = ""
+
+    for (const doc of submissionsSnapshot.docs) {
+      const submission = doc.data()
+
+      // Defensive check
+      if (!submission.userId) continue
+      if (!submission.taskId) continue
+
+      // Get child name
+      let childName = "Unknown"
+      try {
+        const childDoc = await db.collection("users").doc(submission.userId).get()
+        childName = childDoc.exists ? childDoc.data().name : "Unknown"
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to load child name:', e)
+      }
+
+      // Get task details
+      let task = { title: submission.taskTitle || "Unknown Task", points: 0 }
+      try {
+        const taskDoc = await db.collection("taskTemplates").doc(submission.taskId).get()
+        if (taskDoc.exists) {
+          task = taskDoc.data()
+        }
+      } catch (e) {
+        console.warn('[TaskQuest] Failed to load task details:', e)
+      }
+
+      const timestamp = submission.createdAt ? getTimeAgo(submission.createdAt.toDate()) : "Just now"
+
+      const taskCard = document.createElement("div")
+      taskCard.className = "task-verification-card ongoing-card"
+      taskCard.innerHTML = `
+        <div class="task-header">
+          <h3>⏳ ${task.title}</h3>
+          <span class="points-badge">+${task.points} pts</span>
+        </div>
+        <div class="child-info">
+          <span class="child-name">👤 ${childName}</span>
+          <span class="submission-time">Started ${timestamp}</span>
+        </div>
+        <div class="status-message">
+          <p>Your child is currently working on this task. They'll submit photos for review when they're done.</p>
+        </div>
+      `
+      grid.appendChild(taskCard)
+    }
+  } catch (error) {
+    console.error('[TaskQuest] Load ongoing tasks error:', error)
+    const grid = document.getElementById("ongoingTasksGrid")
+    if (grid) grid.innerHTML = "<p>Error loading on-going tasks.</p>"
+  }
+}
+
 async function loadChildren() {
   try {
     const childrenGrid = document.getElementById("childrenGrid")
@@ -1390,6 +1593,10 @@ async function addBonusPoints(childId) {
 
 async function logout() {
   try {
+    // Mark this specific tab/session as logged out
+    sessionStorage.setItem('loggedOut', 'true')
+    
+    // Sign out from Firebase (this affects the user's auth state globally)
     await auth.signOut()
     showNotification("Logged out successfully", "success")
     setTimeout(() => {
