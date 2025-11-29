@@ -526,7 +526,6 @@ async function submitTaskForReview() {
     }
   }
 }
-}
 
 // ==========================================
 // PARENT TASK APPROVAL FUNCTIONS
