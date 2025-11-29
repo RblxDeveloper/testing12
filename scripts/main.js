@@ -953,7 +953,10 @@ async function startTask(taskId, taskTitle) {
 function finishTask(taskId, taskTitle) {
   // This function is called when the user clicks "Finish Task"
   // The submission ID was stored in currentTaskInfo when startTask was called
-  // Just open the modal - the submission ID is already in currentTaskInfo
+  // Ensure currentTaskInfo still has the task ID for submitTaskForReview
+  
+  currentTaskInfo.id = taskId
+  currentTaskInfo.title = taskTitle
   
   const modal = document.getElementById("uploadModal")
   const titleElement = document.getElementById("uploadTaskTitle")
@@ -986,9 +989,9 @@ function closeUploadModal() {
       const label = document.querySelector(`#${id} .upload-label`)
       if (label) label.style.display = "flex"
     })
-    // Reset uploaded photos and task info
+    // Reset uploaded photos and task info (keep submission ID safe)
     uploadedPhotos = { before: null, after: null }
-    currentTaskInfo = { id: null, title: null }
+    currentTaskInfo = { id: null, title: null, inProgressSubmissionId: null, inProgressFamilyCode: null }
   }
 }
 

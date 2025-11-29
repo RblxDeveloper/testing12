@@ -2,7 +2,27 @@
 
 Your app needs these composite indexes created in Firebase Console. When you see "The query requires an index" errors, the console will provide a direct link—click it and create the index. Here's what each query needs:
 
-## Index 1: Activity History (Submissions)
+## Index 1: Activity History (Redeemed Rewards)
+**Collection:** `redeemedRewards`  
+**Fields:**
+- `userId` (Ascending)
+- `redeemedAt` (Descending)
+
+**Used by:** `loadActivityHistory()` function in child profile
+
+**Create it directly:** https://console.firebase.google.com/v1/r/project/taskquest-ef595/firestore/indexes?create_composite=Cldwcm9qZWN0cy90YXNrcXVlc3QtZWY1OTUvZGF0YWJhc2VzLyhkZWZhdWx0KS9jb2xsZWN0aW9uR3JvdXBzL3JlZGVlbWVkUmV3YXJkcy9pbmRleGVzL18QARoKCgZ1c2VySWQQARoOCgpyZWRlZW1lZEF0EAIaDAoIX19uYW1lX18QAg
+
+Or manually:
+1. Go to Firebase Console → Firestore Database → Indexes
+2. Click "Create Index"
+3. Collection: `redeemedRewards`
+4. Add field `userId` (Ascending)
+5. Add field `redeemedAt` (Descending)
+6. Click Create
+
+---
+
+## Index 2: Activity History (Submissions)
 **Collection:** `submissions`  
 **Fields:**
 - `userId` (Ascending)
@@ -10,17 +30,9 @@ Your app needs these composite indexes created in Firebase Console. When you see
 
 **Used by:** `loadActivityHistory()` function in child profile
 
-**Create it:**
-1. Go to Firebase Console → Firestore Database → Indexes
-2. Click "Create Index"
-3. Collection: `submissions`
-4. Add field `userId` (Ascending)
-5. Add field `submittedAt` (Descending)
-6. Click Create
-
 ---
 
-## Index 2: Parent Tasks with Order (if needed)
+## Index 3: Parent Tasks with Order (if needed)
 **Collection:** `taskTemplates`  
 **Fields:**
 - `familyCode` (Ascending)
@@ -30,13 +42,34 @@ Your app needs these composite indexes created in Firebase Console. When you see
 
 ---
 
-## Index 3: Parent Rewards with Order (if needed)
+## Index 4: Parent Rewards with Order (if needed)
 **Collection:** `rewards`  
 **Fields:**
 - `familyCode` (Ascending)
 - `createdAt` (Descending)
 
 **Used by:** `loadParentRewards()` if you add `.orderBy("createdAt", "desc")`
+
+---
+
+## Index 5: On-Going Tasks
+**Collection:** `submissions`  
+**Fields:**
+- `familyCode` (Ascending)
+- `status` (Ascending)
+- `submittedAt` (Descending)
+
+**Used by:** `loadPendingApprovals()` for pending tasks
+
+---
+
+## Index 6: User Submissions Timeline
+**Collection:** `submissions`  
+**Fields:**
+- `userId` (Ascending)
+- `submittedAt` (Descending)
+
+**Used by:** Child activity history and submissions tracking
 
 ---
 
